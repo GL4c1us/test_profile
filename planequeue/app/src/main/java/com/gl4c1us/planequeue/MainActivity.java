@@ -5,18 +5,17 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.PictureInPictureParams;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.util.Base64;
 import android.util.Rational;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -25,68 +24,112 @@ import android.widget.Toast;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends Activity {
-    private static final String SHEET_URL = "https://docs.google.com/spreadsheets/u/0/d/1n3R3m8aNgCvfLVrw9ahocm0-VhgV2ZZjvz-1zmdRo80/htmlview";
+    private static final String SHEET_ID = "1n3R3m8aNgCvfLVrw9ahocm0-VhgV2ZZjvz-1zmdRo80";
+    private static final String SHEET_URL = "https://docs.google.com/spreadsheets/u/0/d/" + SHEET_ID + "/htmlview";
+    private static final String SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:csv";
+
     private WebView webView;
-    private String queueScript = "";
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean refreshInProgress = new AtomicBoolean(false);
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        queueScript = readAsset("queue.js");
+
         webView = new WebView(this);
+        webView.setBackgroundColor(android.graphics.Color.rgb(13, 17, 23));
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setUseWideViewPort(true);
-        settings.setBuiltInZoomControls(true);
+        settings.setDatabaseEnabled(false);
+        settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(false);
 
         webView.addJavascriptInterface(new QueueBridge(this), "PlaneQueueNative");
         webView.setWebChromeClient(new WebChromeClient());
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                super.onPageStarted(view, url, favicon);
-                scheduleInjection(1200);
-                scheduleInjection(3000);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                scheduleInjection(100);
-                scheduleInjection(700);
-                scheduleInjection(1800);
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                super.onReceivedError(view, request, error);
-                if (request == null || request.isForMainFrame()) {
-                    scheduleInjection(100);
-                    scheduleInjection(700);
-                }
-            }
-        });
-        webView.loadUrl(SHEET_URL);
-        scheduleInjection(1800);
-        scheduleInjection(4500);
+        webView.setWebViewClient(new WebViewClient());
+        webView.loadUrl("file:///android_asset/index.html");
     }
 
-    private void scheduleInjection(long delayMs) {
-        handler.postDelayed(() -> {
-            if (webView != null && !queueScript.isEmpty()) webView.evaluateJavascript(queueScript, null);
-        }, delayMs);
+    private void refreshSheet() {
+        if (!refreshInProgress.compareAndSet(false, true)) return;
+
+        networkExecutor.execute(() -> {
+            try {
+                String csv = fetchText(SHEET_CSV_URL);
+                if (csv == null) throw new IOException("The sheet returned no data.");
+
+                String trimmed = csv.trim();
+                if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html") || trimmed.contains("accounts.google.com")) {
+                    throw new IOException("Google returned a sign-in page instead of the queue. Check sheet sharing permissions.");
+                }
+
+                String payload = Base64.encodeToString(csv.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        webView.evaluateJavascript("window.PlaneQueueReceiveCsv && window.PlaneQueueReceiveCsv('" + payload + "');", null);
+                    }
+                });
+            } catch (Exception e) {
+                String message = e.getMessage();
+                if (message == null || message.trim().isEmpty()) message = "Could not load the queue sheet.";
+                String payload = Base64.encodeToString(message.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        webView.evaluateJavascript("window.PlaneQueueReceiveError && window.PlaneQueueReceiveError('" + payload + "');", null);
+                    }
+                });
+            } finally {
+                refreshInProgress.set(false);
+            }
+        });
+    }
+
+    private String fetchText(String urlString) throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(urlString);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(15000);
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.2");
+            connection.setRequestProperty("Accept", "text/csv,text/plain,*/*");
+            connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new IOException("Sheet request failed (HTTP " + code + ").");
+            }
+
+            try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int n;
+                int total = 0;
+                while ((n = in.read(buffer)) != -1) {
+                    total += n;
+                    if (total > 5 * 1024 * 1024) throw new IOException("Sheet response was unexpectedly large.");
+                    out.write(buffer, 0, n);
+                }
+                return out.toString(StandardCharsets.UTF_8.name());
+            }
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     @TargetApi(Build.VERSION_CODES.O)
@@ -109,6 +152,14 @@ public class MainActivity extends Activity {
         enterPictureInPictureMode(builder.build());
     }
 
+    private void openSheet() {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(SHEET_URL)));
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open the sheet.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
@@ -120,17 +171,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String readAsset(String name) {
-        try (InputStream in = getAssets().open(name); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            int n;
-            while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
-            return out.toString(StandardCharsets.UTF_8.name());
-        } catch (IOException e) {
-            return "";
-        }
-    }
-
     @Override
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed();
@@ -138,7 +178,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        handler.removeCallbacksAndMessages(null);
+        networkExecutor.shutdownNow();
         if (webView != null) {
             webView.removeJavascriptInterface("PlaneQueueNative");
             webView.destroy();
@@ -163,6 +203,8 @@ public class MainActivity extends Activity {
             if (json != null && json.length() <= 200000) prefs.edit().putString(KEY_DONE, json).apply();
         }
         @JavascriptInterface public void clearDone() { prefs.edit().remove(KEY_DONE).apply(); }
+        @JavascriptInterface public void refreshSheet() { activity.refreshSheet(); }
         @JavascriptInterface public void enterPip() { activity.runOnUiThread(activity::enterMiniMode); }
+        @JavascriptInterface public void openSheet() { activity.runOnUiThread(activity::openSheet); }
     }
 }
