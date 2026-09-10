@@ -1,5 +1,6 @@
 name: Build Plane Queue APK
 
+# v1.4 direct branch build trigger
 on:
   push:
     branches: [chatgpt-plane-queue-apk]
