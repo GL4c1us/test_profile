@@ -1,6 +1,6 @@
 name: ChatGPT Plane Queue APK
 
-# Plane Queue v1.2 rebuild trigger
+# Plane Queue v1.3 rebuild trigger
 on:
   push:
     branches: [master]
