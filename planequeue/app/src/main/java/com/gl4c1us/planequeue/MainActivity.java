@@ -78,8 +78,17 @@ public class MainActivity extends Activity {
         autoRefreshHandler.postDelayed(autoRefreshRunnable, AUTO_REFRESH_MS);
     }
 
+    private void notifyRefreshStarted() {
+        runOnUiThread(() -> {
+            if (webView != null) {
+                webView.evaluateJavascript("window.PlaneQueueRefreshStarted && window.PlaneQueueRefreshStarted();", null);
+            }
+        });
+    }
+
     private void refreshSheet() {
         if (!refreshInProgress.compareAndSet(false, true)) return;
+        notifyRefreshStarted();
 
         networkExecutor.execute(() -> {
             try {
@@ -120,7 +129,7 @@ public class MainActivity extends Activity {
             connection.setInstanceFollowRedirects(true);
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(15000);
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.3");
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.4");
             connection.setRequestProperty("Accept", "text/csv,text/plain,*/*");
             connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
 
