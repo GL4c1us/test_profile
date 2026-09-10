@@ -15,6 +15,8 @@ import android.os.Looper;
 import android.util.Rational;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -53,16 +55,32 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                scheduleInjection(1200);
+                scheduleInjection(3000);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                if (url != null && url.contains("docs.google.com/spreadsheets")) {
-                    scheduleInjection(450);
-                    scheduleInjection(1400);
-                    scheduleInjection(3200);
+                scheduleInjection(100);
+                scheduleInjection(700);
+                scheduleInjection(1800);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request == null || request.isForMainFrame()) {
+                    scheduleInjection(100);
+                    scheduleInjection(700);
                 }
             }
         });
         webView.loadUrl(SHEET_URL);
+        scheduleInjection(1800);
+        scheduleInjection(4500);
     }
 
     private void scheduleInjection(long delayMs) {
