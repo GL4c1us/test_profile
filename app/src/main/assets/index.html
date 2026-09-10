@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Plane Queue</title>
+<style>
+:root{color-scheme:dark;--bg:#000000;--accent:#00fef9;--panel:#070707;--border:#173b3a;--text:#f7ffff;--muted:#9ec7c5}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom))}
+.wrap{max-width:820px;margin:0 auto}
+h1{font-size:28px;margin:0 0 2px;letter-spacing:-.5px;color:var(--accent)}
+.sub{color:var(--muted);font-size:14px;margin-bottom:13px}.sub .refresh-live{color:var(--accent);font-weight:800}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+button{border-radius:12px;padding:10px 13px;font:inherit;font-weight:700;cursor:pointer}
+.primary{background:var(--accent);color:#000;border:1px solid var(--accent)}
+.secondary{background:#050505;color:var(--accent);border:1px solid var(--accent)}
+.danger{background:#090000;color:#ffb4b8;border:1px solid #6e2a34}
+.status{margin:54px auto;max-width:560px;text-align:center;color:var(--muted)}.status strong{display:block;font-size:26px;margin-bottom:8px;color:var(--accent)}.status small{display:block;margin-top:8px;opacity:.8}
+.list{display:grid;gap:10px}.card{display:grid;grid-template-columns:48px 1fr 52px;align-items:center;gap:10px;min-height:78px;padding:12px 10px 12px 14px;background:var(--panel);border:1px solid var(--border);border-radius:15px}.order{font-size:22px;font-weight:850;color:var(--accent);text-align:center}.tail{font-size:23px;line-height:1.08;font-weight:850}.details{margin-top:5px;font-size:14px;line-height:1.35;color:var(--muted);overflow-wrap:anywhere}.fuel{color:var(--accent);font-weight:900}.check{width:46px;height:46px;border-radius:50%;background:var(--accent);color:#000;font-size:24px;display:grid;place-items:center;padding:0;border:0}
+.undo{position:fixed;left:50%;transform:translateX(-50%);bottom:max(16px,env(safe-area-inset-bottom));display:none;align-items:center;gap:14px;background:var(--accent);color:#000;border-radius:14px;padding:10px 12px 10px 16px;box-shadow:0 10px 40px rgba(0,0,0,.7);font-weight:650}.undo button{background:#000;color:var(--accent);border:1px solid #000;padding:8px 12px}
+html.pq-pip body{padding:6px 8px;overflow:hidden}html.pq-pip h1{font-size:14px;margin:0}html.pq-pip .sub{font-size:9px;margin:1px 0 3px}html.pq-pip .actions,html.pq-pip .undo{display:none!important}html.pq-pip .list{gap:3px}html.pq-pip .card{grid-template-columns:20px 1fr;gap:4px;min-height:0;padding:4px 6px;border-radius:6px}html.pq-pip .card:nth-child(n+4){display:none}html.pq-pip .order{font-size:11px}html.pq-pip .tail{font-size:14px}html.pq-pip .details,html.pq-pip .check{display:none}html.pq-pip .status{margin:18px auto;font-size:11px}html.pq-pip .status strong{font-size:17px;margin-bottom:2px}
+@media(max-width:460px){.card{grid-template-columns:42px 1fr 48px;padding-left:8px;gap:7px}.tail{font-size:21px}.order{font-size:19px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Plane Queue</h1>
+  <div class="sub" id="sub">Starting…</div>
+  <div class="actions">
+    <button class="primary" id="refresh">Refresh Sheet</button>
+    <button class="secondary" id="pip">Pop out</button>
+    <button class="secondary" id="sheet">View Sheet</button>
+    <button class="danger" id="reset">Reset Done</button>
+  </div>
+  <div id="content"><div class="status"><strong>Loading queue…</strong>Connecting to the sheet.</div></div>
+</div>
+<div class="undo" id="undo"><span>Plane removed</span><button id="undoBtn">Undo</button></div>
+<script>
+(() => {
+'use strict';
+let rows=[],done=readDone(),lastUndoneKey=null,undoTimer=null,loadedOnce=false,lastUpdated=null;
+let refreshCount=0,refreshing=false,nextRefreshAt=null,lastRefreshFailed=false;
+const $=id=>document.getElementById(id), norm=v=>String(v||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
+function fnv1a(str){let h=0x811c9dc5;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193);}return(h>>>0).toString(16).padStart(8,'0');}
+function readDone(){try{const raw=window.PlaneQueueNative?PlaneQueueNative.getDone():'[]',arr=JSON.parse(raw||'[]');return new Set(Array.isArray(arr)?arr:[]);}catch(_){return new Set();}}
+function writeDone(){const raw=JSON.stringify(Array.from(done));try{PlaneQueueNative.saveDone(raw);}catch(_){}}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function formatDetails(s){return esc(s).replace(/\b(TOP\s*OFF|TABS?|FUEL\s*ORDER)\b/gi,'<span class="fuel">$1</span>');}
+function parseCsv(text){const out=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(q){if(c==='"'&&n==='"'){cell+='"';i++;}else if(c==='"'){q=false;}else cell+=c;}else{if(c==='"')q=true;else if(c===','){row.push(cell);cell='';}else if(c==='\n'){row.push(cell);out.push(row);row=[];cell='';}else if(c!=='\r')cell+=c;}}row.push(cell);if(row.some(v=>v!==''))out.push(row);return out;}
+function makeRows(csv){const table=parseCsv(csv), seen=new Map(), tailRe=/\bN[0-9][0-9A-Z]{1,5}\b/i;let items=table.map(cells=>cells.map(norm).filter(Boolean)).filter(c=>c.length);const tailItems=items.filter(c=>tailRe.test(c.join(' ')));if(tailItems.length)items=tailItems;return items.map((cells,idx)=>{const text=cells.join(' • '),base=fnv1a(cells.join('\u241f')),occ=(seen.get(base)||0)+1;seen.set(base,occ);const m=text.match(tailRe),tail=m?m[0].toUpperCase():cells[0],details=cells.filter(c=>norm(c).toUpperCase()!==tail.toUpperCase()).join(' • ');return{key:base+'-'+occ,tail,details,text,originalOrder:idx+1};}).filter(r=>r.text.length>1&&!/^(plane|aircraft|tail|tail number|registration|order|status|time|date)(\s*•.*)?$/i.test(r.text));}
+function updateSub(){if(!loadedOnce){$('sub').textContent=refreshing?'Refresh #'+refreshCount+' in progress…':'Loading…';return;}const remaining=rows.filter(r=>!done.has(r.key)).length;let state;if(refreshing)state=`refresh #${refreshCount} now…`;else if(nextRefreshAt){const sec=Math.max(0,Math.ceil((nextRefreshAt-Date.now())/1000));state=`refresh #${refreshCount} • next in ${sec}s${lastRefreshFailed?' • last failed':''}`;}else state=`refresh #${refreshCount}`;$('sub').innerHTML=`${remaining} remaining • ${done.size} completed locally • <span class="refresh-live">${esc(state)}</span>`;}
+function render(){const remaining=rows.filter(r=>!done.has(r.key));updateSub();if(!loadedOnce){$('content').innerHTML='<div class="status"><strong>Loading queue…</strong>Connecting to the sheet.</div>';return;}if(!remaining.length){const note=rows.length?'Everything currently in the sheet has been checked off.':'No planes are currently waiting in the queue.';$('content').innerHTML=`<div class="status"><strong>Queue empty</strong>${note}</div>`;return;}const list=document.createElement('div');list.className='list';remaining.forEach((r,i)=>{const card=document.createElement('div');card.className='card';card.innerHTML=`<div class="order">${i+1}</div><div><div class="tail">${esc(r.tail)}</div>${r.details?`<div class="details">${formatDetails(r.details)}</div>`:''}</div><button class="check" aria-label="Complete ${esc(r.tail)}">✓</button>`;card.querySelector('.check').onclick=()=>complete(r.key,card);list.appendChild(card);});$('content').replaceChildren(list);}
+function complete(key,card){lastUndoneKey=key;done.add(key);writeDone();card.style.opacity='0';card.style.transform='translateX(18px)';setTimeout(()=>{render();showUndo();},180);}
+function showUndo(){$('undo').style.display='flex';if(undoTimer)clearTimeout(undoTimer);undoTimer=setTimeout(()=>{$('undo').style.display='none';lastUndoneKey=null;},5000);}
+function refresh(){if(!loadedOnce)render();try{PlaneQueueNative.refreshSheet();}catch(e){showError('Native refresh bridge unavailable.');}}
+function showError(msg){if(!loadedOnce){loadedOnce=true;rows=[];$('content').innerHTML=`<div class="status"><strong>Couldn’t load queue</strong>${esc(msg)}<small>The app UI is working; this is a sheet/network access problem.</small></div>`;}updateSub();}
+window.PlaneQueueRefreshStarted=()=>{refreshCount++;refreshing=true;lastRefreshFailed=false;nextRefreshAt=null;updateSub();};
+window.PlaneQueueReceiveCsv=b64=>{try{const bin=atob(b64),bytes=Uint8Array.from(bin,c=>c.charCodeAt(0)),csv=new TextDecoder('utf-8').decode(bytes);rows=makeRows(csv);loadedOnce=true;lastUpdated=Date.now();refreshing=false;lastRefreshFailed=false;nextRefreshAt=lastUpdated+15000;render();}catch(e){refreshing=false;lastRefreshFailed=true;nextRefreshAt=Date.now()+15000;showError('The sheet data could not be parsed.');}};
+window.PlaneQueueReceiveError=b64=>{refreshing=false;lastRefreshFailed=true;nextRefreshAt=Date.now()+15000;try{showError(atob(b64));}catch(_){showError('Could not load the queue sheet.');}};
+$('refresh').onclick=refresh;$('pip').onclick=()=>{try{PlaneQueueNative.enterPip();}catch(_){showError('Picture-in-picture is unavailable.');}};$('sheet').onclick=()=>{try{PlaneQueueNative.openSheet();}catch(_){}};$('reset').onclick=()=>{if(confirm('Put all completed planes back in the queue?')){done=new Set();try{PlaneQueueNative.clearDone();}catch(_){}render();}};$('undoBtn').onclick=()=>{if(lastUndoneKey){done.delete(lastUndoneKey);writeDone();lastUndoneKey=null;$('undo').style.display='none';render();}};
+setInterval(updateSub,250);render();setTimeout(refresh,80);
+})();
+</script>
+</body>
+</html>
