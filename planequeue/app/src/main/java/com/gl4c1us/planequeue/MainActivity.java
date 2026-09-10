@@ -43,13 +43,7 @@ public class MainActivity extends Activity {
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean refreshInProgress = new AtomicBoolean(false);
     private final Handler autoRefreshHandler = new Handler(Looper.getMainLooper());
-    private final Runnable autoRefreshRunnable = new Runnable() {
-        @Override
-        public void run() {
-            refreshSheet();
-            autoRefreshHandler.postDelayed(this, AUTO_REFRESH_MS);
-        }
-    };
+    private final Runnable autoRefreshRunnable = this::refreshSheet;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -75,7 +69,14 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient());
         webView.loadUrl("file:///android_asset/index.html");
 
-        autoRefreshHandler.postDelayed(autoRefreshRunnable, AUTO_REFRESH_MS);
+        autoRefreshHandler.postDelayed(autoRefreshRunnable, 1000L);
+    }
+
+    private void scheduleNextAutoRefresh() {
+        runOnUiThread(() -> {
+            autoRefreshHandler.removeCallbacks(autoRefreshRunnable);
+            autoRefreshHandler.postDelayed(autoRefreshRunnable, AUTO_REFRESH_MS);
+        });
     }
 
     private void notifyRefreshStarted() {
@@ -88,6 +89,7 @@ public class MainActivity extends Activity {
 
     private void refreshSheet() {
         if (!refreshInProgress.compareAndSet(false, true)) return;
+        autoRefreshHandler.removeCallbacks(autoRefreshRunnable);
         notifyRefreshStarted();
 
         networkExecutor.execute(() -> {
@@ -117,6 +119,7 @@ public class MainActivity extends Activity {
                 });
             } finally {
                 refreshInProgress.set(false);
+                scheduleNextAutoRefresh();
             }
         });
     }
@@ -129,6 +132,9 @@ public class MainActivity extends Activity {
             connection.setInstanceFollowRedirects(true);
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(15000);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
+            connection.setRequestProperty("Pragma", "no-cache");
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.4");
             connection.setRequestProperty("Accept", "text/csv,text/plain,*/*");
             connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
