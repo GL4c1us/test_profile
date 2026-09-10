@@ -12,6 +12,8 @@ import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Rational;
 import android.webkit.JavascriptInterface;
@@ -35,10 +37,19 @@ public class MainActivity extends Activity {
     private static final String SHEET_ID = "1n3R3m8aNgCvfLVrw9ahocm0-VhgV2ZZjvz-1zmdRo80";
     private static final String SHEET_URL = "https://docs.google.com/spreadsheets/u/0/d/" + SHEET_ID + "/htmlview";
     private static final String SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:csv";
+    private static final long AUTO_REFRESH_MS = 15000L;
 
     private WebView webView;
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean refreshInProgress = new AtomicBoolean(false);
+    private final Handler autoRefreshHandler = new Handler(Looper.getMainLooper());
+    private final Runnable autoRefreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            refreshSheet();
+            autoRefreshHandler.postDelayed(this, AUTO_REFRESH_MS);
+        }
+    };
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -46,7 +57,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         webView = new WebView(this);
-        webView.setBackgroundColor(android.graphics.Color.rgb(13, 17, 23));
+        webView.setBackgroundColor(android.graphics.Color.BLACK);
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
@@ -63,6 +74,8 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient());
         webView.loadUrl("file:///android_asset/index.html");
+
+        autoRefreshHandler.postDelayed(autoRefreshRunnable, AUTO_REFRESH_MS);
     }
 
     private void refreshSheet() {
@@ -107,7 +120,7 @@ public class MainActivity extends Activity {
             connection.setInstanceFollowRedirects(true);
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(15000);
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.2");
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) PlaneQueue/1.3");
             connection.setRequestProperty("Accept", "text/csv,text/plain,*/*");
             connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
 
@@ -178,6 +191,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        autoRefreshHandler.removeCallbacksAndMessages(null);
         networkExecutor.shutdownNow();
         if (webView != null) {
             webView.removeJavascriptInterface("PlaneQueueNative");
