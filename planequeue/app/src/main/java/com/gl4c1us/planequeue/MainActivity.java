@@ -1,17 +1,24 @@
 package com.gl4c1us.planequeue;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Activity;
+import android.app.PictureInPictureParams;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Rational;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -64,6 +71,37 @@ public class MainActivity extends Activity {
         }, delayMs);
     }
 
+    @TargetApi(Build.VERSION_CODES.O)
+    private void enterMiniMode() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                !getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            Toast.makeText(this, "Picture-in-picture is not supported on this device.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (webView != null) {
+            webView.evaluateJavascript("document.documentElement.classList.add('pq-pip');", null);
+        }
+
+        PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                .setAspectRatio(new Rational(16, 9));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setSeamlessResizeEnabled(true);
+        }
+        enterPictureInPictureMode(builder.build());
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        if (webView != null) {
+            String js = isInPictureInPictureMode
+                    ? "document.documentElement.classList.add('pq-pip');"
+                    : "document.documentElement.classList.remove('pq-pip');";
+            webView.evaluateJavascript(js, null);
+        }
+    }
+
     private String readAsset(String name) {
         try (InputStream in = getAssets().open(name); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
@@ -95,9 +133,11 @@ public class MainActivity extends Activity {
         private static final String PREFS = "plane_queue_state";
         private static final String KEY_DONE = "done_json";
         private final SharedPreferences prefs;
+        private final MainActivity activity;
 
-        QueueBridge(Context context) {
-            prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        QueueBridge(MainActivity activity) {
+            this.activity = activity;
+            prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
 
         @JavascriptInterface public String getDone() { return prefs.getString(KEY_DONE, "[]"); }
@@ -105,5 +145,6 @@ public class MainActivity extends Activity {
             if (json != null && json.length() <= 200000) prefs.edit().putString(KEY_DONE, json).apply();
         }
         @JavascriptInterface public void clearDone() { prefs.edit().remove(KEY_DONE).apply(); }
+        @JavascriptInterface public void enterPip() { activity.runOnUiThread(activity::enterMiniMode); }
     }
 }
