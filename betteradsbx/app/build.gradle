@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.mason.betteradsbx'
+    compileSdk 35
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        applicationId 'com.mason.betteradsbx'
+        minSdk 23
+        targetSdk 35
+        versionCode 2
+        versionName '0.2.0'
+    }
+}
