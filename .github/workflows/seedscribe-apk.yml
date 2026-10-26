@@ -11,8 +11,10 @@ jobs:
     steps:
       - name: Check out isolated build branch
         uses: actions/checkout@v4
-      - name: Unpack SeedScribe source
-        run: unzip -q seedscribe-source.zip
+      - name: Unpack source and fix Android Button API name
+        run: |
+          unzip -q seedscribe-source.zip
+          sed -i 's/\.setTextAllCaps(false)/.setAllCaps(false)/' SeedScribe-Android/app/src/main/java/com/seedscribe/app/MainActivity.java
       - name: Java 17
         uses: actions/setup-java@v4
         with:
