@@ -18,8 +18,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Android SDK on hosted runner
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
       - name: Android SDK API 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Gradle 8.11.1
